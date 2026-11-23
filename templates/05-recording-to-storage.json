@@ -1,0 +1,111 @@
+{
+	"name": "MeetStream — Archive completed recordings in Amazon S3",
+	"nodes": [
+		{
+			"parameters": {
+				"content": "## START HERE\n1. Open **Get fresh recording URL** → select your saved **MeetStream account**.\n2. Open **Upload recording to S3** → connect AWS → enter your private bucket name.\n3. Open **MeetStream video webhook** → copy its **Production URL**.\n4. In MeetStream, create a workspace webhook for `video.processed`, paste that URL, then click **Publish** here.\n5. Run a bot with recording enabled.\n\n**Result:** each completed recording is copied to `meetstream/<bot_id>.mp4` in your S3 bucket.",
+				"height": 370,
+				"width": 700
+			},
+			"id": "5e3a5cf3-a6ee-4381-8cc2-2e5c830a303b",
+			"name": "START HERE",
+			"type": "n8n-nodes-base.stickyNote",
+			"typeVersion": 1,
+			"position": [160, 20]
+		},
+		{
+			"parameters": {
+				"httpMethod": "POST",
+				"path": "meetstream-video-ready-b719af7b",
+				"responseMode": "onReceived",
+				"options": {}
+			},
+			"id": "69a7969f-6e39-441c-8f4a-c9ed6bd0714f",
+			"name": "MeetStream video webhook",
+			"type": "n8n-nodes-base.webhook",
+			"typeVersion": 2.1,
+			"position": [180, 300],
+			"webhookId": "b719af7b-2806-491c-abcb-b72ba5a204d1"
+		},
+		{
+			"parameters": {
+				"jsCode": "const payload = $json.body ?? $json;\nconst event = payload.bot_event ?? payload.event;\nif (event !== 'video.processed' || payload.video_status !== 'Success') return [];\nif (!payload.bot_id) throw new Error('MeetStream webhook did not include bot_id.');\nreturn [{ json: { ...payload, bot_id: String(payload.bot_id) } }];"
+			},
+			"id": "757dbb3b-9ce1-4d29-ab32-41452817202e",
+			"name": "Accept successful video event",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [430, 300]
+		},
+		{
+			"parameters": {
+				"resource": "bot",
+				"operation": "getRecording",
+				"botId": "={{ $json.bot_id }}"
+			},
+			"id": "7cc58082-8f0d-4338-a56f-c251cd853421",
+			"name": "Get fresh recording URL",
+			"type": "n8n-nodes-meetstream.meetStream",
+			"typeVersion": 1,
+			"position": [680, 300],
+			"retryOnFail": true,
+			"maxTries": 5,
+			"waitBetweenTries": 10000
+		},
+		{
+			"parameters": {
+				"jsCode": "if (typeof $json.video_url !== 'string' || !/^https:\\/\\/[^\\s]+$/i.test($json.video_url)) throw new Error('No downloadable recording URL. Ensure video recording was enabled, wait for video.processed with Success, and check whether the media has expired.');\nreturn $input.all();"
+			},
+			"id": "b7224c23-477a-4707-8909-b1dcad0668dc",
+			"name": "Require recording URL",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [940, 300]
+		},
+		{
+			"parameters": {
+				"url": "={{ $json.video_url }}",
+				"options": { "response": { "response": { "responseFormat": "file" } } }
+			},
+			"id": "eecf9326-d72a-455c-b8b7-6a861cc5b78d",
+			"name": "Download recording before URL expires",
+			"type": "n8n-nodes-base.httpRequest",
+			"typeVersion": 4.5,
+			"position": [1200, 300]
+		},
+		{
+			"parameters": {
+				"resource": "file",
+				"operation": "upload",
+				"bucketName": "replace-with-your-private-bucket",
+				"fileName": "=meetstream/{{ $('Accept successful video event').item.json.bot_id }}.mp4",
+				"binaryData": true,
+				"binaryPropertyName": "data",
+				"additionalFields": {}
+			},
+			"id": "57388bcc-d6d3-4f28-9b2c-c6f85b2f993a",
+			"name": "Upload recording to S3",
+			"type": "n8n-nodes-base.awsS3",
+			"typeVersion": 2,
+			"position": [1460, 300]
+		}
+	],
+	"connections": {
+		"MeetStream video webhook": {
+			"main": [[{ "node": "Accept successful video event", "type": "main", "index": 0 }]]
+		},
+		"Accept successful video event": {
+			"main": [[{ "node": "Get fresh recording URL", "type": "main", "index": 0 }]]
+		},
+		"Get fresh recording URL": {
+			"main": [[{ "node": "Require recording URL", "type": "main", "index": 0 }]]
+		},
+		"Require recording URL": {
+			"main": [[{ "node": "Download recording before URL expires", "type": "main", "index": 0 }]]
+		},
+		"Download recording before URL expires": {
+			"main": [[{ "node": "Upload recording to S3", "type": "main", "index": 0 }]]
+		}
+	},
+	"settings": { "executionOrder": "v1" }
+}

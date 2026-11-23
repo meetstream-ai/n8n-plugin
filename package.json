@@ -1,0 +1,63 @@
+{
+	"name": "n8n-nodes-meetstream",
+	"version": "0.1.0",
+	"description": "Use MeetStream meeting bots in n8n workflows",
+	"license": "MIT",
+	"publishConfig": {
+		"access": "public"
+	},
+	"engines": {
+		"node": ">=24"
+	},
+	"homepage": "https://meetstream.ai",
+	"keywords": [
+		"n8n-community-node-package"
+	],
+	"author": {
+		"name": "MeetStream",
+		"email": "support@meetstream.ai"
+	},
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/meetstream-ai/n8n-plugin.git"
+	},
+	"scripts": {
+		"build": "n8n-node build",
+		"build:watch": "tsc --watch",
+		"predev": "npm run templates:local",
+		"test": "npm run build && node --test",
+		"test:cloud:prepare": "node scripts/prepare-cloud-qa.mjs",
+		"dev": "n8n-node dev",
+		"templates:local": "node scripts/prepare-local-templates.mjs",
+		"lint": "n8n-node lint",
+		"lint:fix": "n8n-node lint --fix",
+		"release": "n8n-node release",
+		"prepublishOnly": "n8n-node prerelease"
+	},
+	"files": [
+		"dist",
+		"!dist/**/*.tsbuildinfo"
+	],
+	"n8n": {
+		"n8nNodesApiVersion": 1,
+		"strict": true,
+		"credentials": [
+			"dist/credentials/MeetStreamApi.credentials.js"
+		],
+		"nodes": [
+			"dist/nodes/MeetStream/MeetStream.node.js"
+		]
+	},
+	"devDependencies": {
+		"@n8n/node-cli": "0.54.3",
+		"eslint": "9.39.4",
+		"ignore": "7.0.14",
+		"n8n-workflow": "2.44.2",
+		"prettier": "^3.9.10",
+		"release-it": "^21.1.1",
+		"typescript": "5.9.3"
+	},
+	"peerDependencies": {
+		"n8n-workflow": "*"
+	}
+}

@@ -1,0 +1,134 @@
+{
+	"name": "MeetStream — Save completed transcripts to HubSpot",
+	"nodes": [
+		{
+			"parameters": {
+				"content": "## START HERE\n1. Open both MeetStream nodes → select your saved **MeetStream account**.\n2. Open **Create HubSpot meeting note** → connect HubSpot. For a saved Service Key, change **Authentication** to **Service Key** (older n8n: **App Token**), then select that credential. OAuth2 also works.\n3. Open **MeetStream transcription webhook** → copy its **Production URL**.\n4. In MeetStream, create a workspace webhook for `transcription.processed` and paste that URL.\n5. Click **Publish**.\n\nThe bot must include `custom_attributes.hubspot_contact_id` so the note is attached to the right contact.\n\n**Result:** each completed transcript becomes a HubSpot meeting note.",
+				"height": 440,
+				"width": 700
+			},
+			"id": "68d45a90-9f39-4147-9074-8e19aa58b84f",
+			"name": "START HERE",
+			"type": "n8n-nodes-base.stickyNote",
+			"typeVersion": 1,
+			"position": [180, 20]
+		},
+		{
+			"parameters": {
+				"httpMethod": "POST",
+				"path": "meetstream-transcript-ready-6dd798bf",
+				"responseMode": "onReceived",
+				"options": {}
+			},
+			"id": "d45a2a7b-6e78-4b90-a4de-82dd350073d9",
+			"name": "MeetStream transcription webhook",
+			"type": "n8n-nodes-base.webhook",
+			"typeVersion": 2.1,
+			"position": [200, 300],
+			"webhookId": "6dd798bf-68d2-43f4-b53e-d9ef8803206f"
+		},
+		{
+			"parameters": {
+				"jsCode": "const payload = $json.body ?? $json;\nconst event = payload.bot_event ?? payload.event;\nif (event !== 'transcription.processed' || payload.transcript_status !== 'Success') return [];\nif (!payload.bot_id) throw new Error('MeetStream webhook did not include bot_id.');\nconst contactId = payload.custom_attributes?.hubspot_contact_id;\nif (!contactId) throw new Error('Set custom_attributes.hubspot_contact_id when creating the bot.');\nreturn [{ json: { ...payload, bot_id: String(payload.bot_id), hubspot_contact_id: String(contactId) } }];"
+			},
+			"id": "1318208f-7586-4199-bcec-896ddca435c9",
+			"name": "Accept successful transcript event",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [440, 300]
+		},
+		{
+			"parameters": {
+				"resource": "bot",
+				"operation": "getTranscriptions",
+				"botId": "={{ $json.bot_id }}"
+			},
+			"id": "609e2940-627b-490d-9a20-ac5316e1f77f",
+			"name": "Get transcription runs",
+			"type": "n8n-nodes-meetstream.meetStream",
+			"typeVersion": 1,
+			"position": [680, 300],
+			"retryOnFail": true,
+			"maxTries": 3,
+			"waitBetweenTries": 5000
+		},
+		{
+			"parameters": {
+				"jsCode": "const runs = Array.isArray($json.transcriptions) ? $json.transcriptions : Array.isArray($json.data) ? $json.data : [];\nconst createdAt = (run) => { const time = Date.parse(run.created_at ?? \"\"); return Number.isFinite(time) ? time : -Infinity; };\nconst completed = runs\n  .filter((run) => run?.status === 'Success' && run.transcript_id)\n  .sort((a, b) => createdAt(b) - createdAt(a));\nif (!completed.length) throw new Error('No successful post-call transcription run was returned.');\nreturn [{ json: { transcript_id: completed[0].transcript_id } }];"
+			},
+			"id": "98e2baac-f789-43dc-aab5-b8c4915b6ba2",
+			"name": "Select latest successful transcript",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [920, 300]
+		},
+		{
+			"parameters": {
+				"resource": "transcript",
+				"operation": "getTranscript",
+				"transcriptId": "={{ $json.transcript_id }}",
+				"raw": false
+			},
+			"id": "ba70e4a6-4d11-454e-9974-cfd30418a671",
+			"name": "Get transcript",
+			"type": "n8n-nodes-meetstream.meetStream",
+			"typeVersion": 1,
+			"position": [1160, 300],
+			"retryOnFail": true,
+			"maxTries": 3,
+			"waitBetweenTries": 5000
+		},
+		{
+			"parameters": {
+				"jsCode": "const segments = (Array.isArray($json.data) ? $json.data : []).map((segment) => {\n  const transcript = typeof segment?.transcript === 'string' && segment.transcript.trim()\n    ? segment.transcript\n    : Array.isArray(segment?.words) ? segment.words.filter((word) => typeof word?.text === 'string' && word.text.trim()).map((word) => word.text.trim()).join(' ') : '';\n  const speaker = segment?.speaker ?? segment?.participant?.name;\n  return { transcript, speaker: typeof speaker === 'string' && speaker.trim() ? speaker : 'Speaker' };\n}).filter((segment) => segment.transcript.trim());\nif (!segments.length) throw new Error('MeetStream returned an empty transcript.');\nconst fullTranscript = segments.map((segment) => `${segment.speaker ?? 'Speaker'}: ${segment.transcript ?? ''}`).join('\\n');\nconst limit = 60000;\nconst transcript = fullTranscript.length > limit ? `${fullTranscript.slice(0, limit)}\\n\\n[Transcript truncated to ${limit} characters.]` : fullTranscript;\nconst event = $('Accept successful transcript event').item.json;\nreturn [{ json: { bot_id: event.bot_id, hubspot_contact_id: event.hubspot_contact_id, transcript } }];"
+			},
+			"id": "a9397fcd-51c2-462b-8922-c7e21623495c",
+			"name": "Format transcript for CRM",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [1400, 300]
+		},
+		{
+			"parameters": {
+				"authentication": "oAuth2",
+				"resource": "engagement",
+				"operation": "create",
+				"type": "meeting",
+				"metadata": {
+					"title": "=MeetStream transcript — {{ $json.bot_id }}",
+					"body": "={{ $json.transcript.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\\r\\n|\\r|\\n/g, '<br>') }}",
+					"internalMeetingNotes": "={{ $json.transcript.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\\r\\n|\\r|\\n/g, '<br>') }}"
+				},
+				"additionalFields": {
+					"associations": { "contactIds": "={{ $json.hubspot_contact_id }}" }
+				}
+			},
+			"id": "6a010bed-a3d7-498e-9cfb-9beb94999487",
+			"name": "Create HubSpot meeting note",
+			"type": "n8n-nodes-base.hubspot",
+			"typeVersion": 2.2,
+			"position": [1660, 300]
+		}
+	],
+	"connections": {
+		"MeetStream transcription webhook": {
+			"main": [[{ "node": "Accept successful transcript event", "type": "main", "index": 0 }]]
+		},
+		"Accept successful transcript event": {
+			"main": [[{ "node": "Get transcription runs", "type": "main", "index": 0 }]]
+		},
+		"Get transcription runs": {
+			"main": [[{ "node": "Select latest successful transcript", "type": "main", "index": 0 }]]
+		},
+		"Select latest successful transcript": {
+			"main": [[{ "node": "Get transcript", "type": "main", "index": 0 }]]
+		},
+		"Get transcript": {
+			"main": [[{ "node": "Format transcript for CRM", "type": "main", "index": 0 }]]
+		},
+		"Format transcript for CRM": {
+			"main": [[{ "node": "Create HubSpot meeting note", "type": "main", "index": 0 }]]
+		}
+	},
+	"settings": { "executionOrder": "v1" }
+}

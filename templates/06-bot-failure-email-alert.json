@@ -1,0 +1,99 @@
+{
+	"name": "MeetStream — Email bot join and recording failures",
+	"nodes": [
+		{
+			"parameters": {
+				"content": "## START HERE\n1. Open **Get bot details** → select your saved **MeetStream account**.\n2. Open **Email meeting owner** → select your saved **Gmail** credential and replace `you@example.com` with the recipient.\n3. Open **MeetStream lifecycle webhook** → copy its **Production URL**.\n4. In MeetStream, create a workspace webhook for `bot.denied`, `bot.notallowed`, `bot.failed`, and `bot.recording_permission_denied`, then paste the URL.\n5. Click **Publish**.\n\n**Result:** the meeting owner receives a useful Gmail alert when a bot cannot join or record. Successful and unrelated events are ignored.",
+				"height": 400,
+				"width": 760
+			},
+			"id": "3f71d264-d290-4baa-9044-c0153cf79b1d",
+			"name": "START HERE",
+			"type": "n8n-nodes-base.stickyNote",
+			"typeVersion": 1,
+			"position": [180, -120]
+		},
+		{
+			"parameters": {
+				"httpMethod": "POST",
+				"path": "meetstream-bot-failure-6dcaa3e8",
+				"responseMode": "onReceived",
+				"options": {}
+			},
+			"id": "6dcaa3e8-b635-4045-a749-fa2309cac11d",
+			"name": "MeetStream lifecycle webhook",
+			"type": "n8n-nodes-base.webhook",
+			"typeVersion": 2.1,
+			"position": [200, 320],
+			"webhookId": "e501433e-0cd0-4fdd-90d9-922a90a207c3"
+		},
+		{
+			"parameters": {
+				"jsCode": "const payload = $json.body ?? $json;\nconst event = payload.bot_event ?? payload.event;\nconst failures = new Set(['bot.denied', 'bot.notallowed', 'bot.failed', 'bot.recording_permission_denied']);\nif (!failures.has(event)) return [];\nif (!payload.bot_id) throw new Error('MeetStream webhook did not include bot_id.');\nreturn [{ json: { ...payload, bot_event: event, bot_id: String(payload.bot_id) } }];"
+			},
+			"id": "5dd00b9b-c982-4f7c-ad31-4b24014cfc9a",
+			"name": "Keep actionable failures",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [450, 320]
+		},
+		{
+			"parameters": {
+				"resource": "bot",
+				"operation": "getBot",
+				"botId": "={{ $json.bot_id }}"
+			},
+			"id": "7bc6ef6f-51d9-4e6e-9353-a0c7e7988ce9",
+			"name": "Get bot details",
+			"type": "n8n-nodes-meetstream.meetStream",
+			"typeVersion": 1,
+			"position": [700, 320],
+			"retryOnFail": true,
+			"maxTries": 3,
+			"waitBetweenTries": 5000
+		},
+		{
+			"parameters": {
+				"jsCode": "const event = $('Keep actionable failures').item.json;\nconst bot = $json.bot_details ?? $json;\nconst reason = event.message ?? bot.message ?? 'MeetStream did not provide a failure message.';\nconst meetingLink = bot.MeetingLink ?? bot.meeting_link ?? bot.meeting_url ?? event.meeting_link ?? 'Not provided';\nreturn [{ json: {\n  bot_id: event.bot_id,\n  bot_event: event.bot_event,\n  reason,\n  meeting_link: meetingLink,\n  occurred_at: event.timestamp ?? new Date().toISOString(),\n  body: `MeetStream needs attention.\\n\\nEvent: ${event.bot_event}\\nReason: ${reason}\\nBot ID: ${event.bot_id}\\nMeeting: ${meetingLink}\\nTime: ${event.timestamp ?? 'Not provided'}\\n\\nOpen MeetStream and the meeting host controls before retrying.`\n} }];"
+			},
+			"id": "8c42cb0b-09eb-4e29-8200-7eabf8aae835",
+			"name": "Prepare failure alert",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [950, 320]
+		},
+		{
+			"parameters": {
+				"resource": "message",
+				"operation": "send",
+				"sendTo": "you@example.com",
+				"subject": "=MeetStream alert — {{ $json.bot_event }}",
+				"emailType": "text",
+				"message": "={{ $json.body }}",
+				"options": {
+					"appendAttribution": false
+				}
+			},
+			"id": "4b3fb727-97ef-48c0-b088-45bccead9030",
+			"name": "Email meeting owner",
+			"type": "n8n-nodes-base.gmail",
+			"typeVersion": 2.2,
+			"position": [1200, 320]
+		}
+	],
+	"connections": {
+		"MeetStream lifecycle webhook": {
+			"main": [[{ "node": "Keep actionable failures", "type": "main", "index": 0 }]]
+		},
+		"Keep actionable failures": {
+			"main": [[{ "node": "Get bot details", "type": "main", "index": 0 }]]
+		},
+		"Get bot details": {
+			"main": [[{ "node": "Prepare failure alert", "type": "main", "index": 0 }]]
+		},
+		"Prepare failure alert": {
+			"main": [[{ "node": "Email meeting owner", "type": "main", "index": 0 }]]
+		}
+	},
+	"settings": { "executionOrder": "v1" }
+}
